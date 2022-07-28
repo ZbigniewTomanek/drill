@@ -33,6 +33,7 @@ import okhttp3.Response;
 
 import okhttp3.ResponseBody;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.net.util.Base64;
 import org.apache.drill.common.exceptions.EmptyErrorContext;
 import org.apache.drill.common.logical.OAuthConfig;
 import org.apache.drill.common.logical.StoragePluginConfig.AuthMode;
@@ -61,6 +62,8 @@ import org.apache.drill.exec.store.http.util.HttpProxyConfig.ProxyBuilder;
 import org.apache.drill.exec.store.security.UsernamePasswordWithProxyCredentials;
 import org.jetbrains.annotations.NotNull;
 import org.json.simple.JSONObject;
+import org.json.simple.parser.JSONParser;
+import org.json.simple.parser.ParseException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -622,26 +625,22 @@ public class SimpleHttp implements AutoCloseable {
   }
 
   private JSONObject buildJsonPostBody(String postBody) {
-    JSONObject jsonObject = new JSONObject();
     if (StringUtils.isEmpty(postBody)) {
-      return jsonObject;
+      return new JSONObject();
     }
-    final Pattern postBodyPattern = Pattern.compile("^.+=.+$");
 
-    String[] lines = postBody.split("\\r?\\n");
-    for (String line : lines) {
-
-      // If the string is in the format key=value split it,
-      // Otherwise ignore
-      if (postBodyPattern.matcher(line).find()) {
-        //Split into key/value
-        String[] parts = line.split("=");
-        jsonObject.put(parts[0], parts[1]);
-      }
+    if (Base64.isArrayByteBase64(postBody.getBytes(StandardCharsets.UTF_8))) {
+      postBody = new String(Base64.decodeBase64(postBody));
+      logger.info(String.format("postBody decoded from base64: %s", postBody));
     }
-    return jsonObject;
+
+    JSONParser parser = new JSONParser();
+    try {
+      return (JSONObject) parser.parse(postBody);
+    } catch (ParseException e) {
+      throw new RuntimeException(String.format("Could not parse postBody json %s", e.getMessage()));
+    }
   }
-
   /**
    * This function is used to push filters down to the post body rather than the URL query string.
    * It will also add the static parameters to the post body as well.
