@@ -18,56 +18,6 @@
 package org.apache.drill.exec.store.http.util;
 
 import com.typesafe.config.Config;
-import okhttp3.Cache;
-import okhttp3.Credentials;
-import okhttp3.FormBody;
-import okhttp3.HttpUrl;
-import okhttp3.Interceptor;
-import okhttp3.MediaType;
-import okhttp3.OkHttpClient;
-import okhttp3.OkHttpClient.Builder;
-import okhttp3.Request;
-import okhttp3.RequestBody;
-import okhttp3.Response;
-
-import okhttp3.ResponseBody;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.drill.common.exceptions.EmptyErrorContext;
-import org.apache.drill.common.logical.OAuthConfig;
-import org.apache.drill.common.logical.StoragePluginConfig.AuthMode;
-import org.apache.drill.common.map.CaseInsensitiveMap;
-import org.apache.drill.common.exceptions.CustomErrorContext;
-import org.apache.drill.common.exceptions.UserException;
-import org.apache.drill.exec.ExecConstants;
-import org.apache.drill.exec.expr.fn.impl.StringFunctionHelpers;
-import org.apache.drill.exec.expr.holders.NullableVarCharHolder;
-import org.apache.drill.exec.oauth.PersistentTokenTable;
-import org.apache.drill.exec.server.DrillbitContext;
-import org.apache.drill.exec.store.StoragePlugin;
-import org.apache.drill.exec.store.StoragePluginRegistry;
-import org.apache.drill.exec.store.StoragePluginRegistry.PluginException;
-import org.apache.drill.exec.store.http.HttpApiConfig;
-import org.apache.drill.exec.store.http.HttpApiConfig.HttpMethod;
-import org.apache.drill.exec.store.http.HttpApiConfig.PostLocation;
-import org.apache.drill.exec.store.http.HttpStoragePlugin;
-import org.apache.drill.exec.store.http.HttpStoragePluginConfig;
-import org.apache.drill.exec.store.http.HttpSubScan;
-import org.apache.drill.exec.store.http.paginator.Paginator;
-import org.apache.drill.exec.store.http.oauth.AccessTokenAuthenticator;
-import org.apache.drill.exec.store.http.oauth.AccessTokenInterceptor;
-import org.apache.drill.exec.store.http.oauth.AccessTokenRepository;
-import org.apache.drill.exec.store.http.util.HttpProxyConfig.ProxyBuilder;
-import org.apache.drill.exec.store.security.UsernamePasswordWithProxyCredentials;
-import org.jetbrains.annotations.NotNull;
-import org.json.simple.JSONObject;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import javax.net.ssl.HostnameVerifier;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLSocketFactory;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.X509TrustManager;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
@@ -91,7 +41,57 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+import okhttp3.Cache;
+import okhttp3.Credentials;
+import okhttp3.FormBody;
+import okhttp3.HttpUrl;
+import okhttp3.Interceptor;
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.OkHttpClient.Builder;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
+import okhttp3.ResponseBody;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.net.util.Base64;
+import org.apache.drill.common.exceptions.CustomErrorContext;
+import org.apache.drill.common.exceptions.EmptyErrorContext;
+import org.apache.drill.common.exceptions.UserException;
+import org.apache.drill.common.logical.OAuthConfig;
+import org.apache.drill.common.logical.StoragePluginConfig.AuthMode;
+import org.apache.drill.common.map.CaseInsensitiveMap;
+import org.apache.drill.exec.ExecConstants;
+import org.apache.drill.exec.expr.fn.impl.StringFunctionHelpers;
+import org.apache.drill.exec.expr.holders.NullableVarCharHolder;
+import org.apache.drill.exec.oauth.PersistentTokenTable;
+import org.apache.drill.exec.server.DrillbitContext;
+import org.apache.drill.exec.store.StoragePlugin;
+import org.apache.drill.exec.store.StoragePluginRegistry;
+import org.apache.drill.exec.store.StoragePluginRegistry.PluginException;
+import org.apache.drill.exec.store.http.HttpApiConfig;
+import org.apache.drill.exec.store.http.HttpApiConfig.HttpMethod;
+import org.apache.drill.exec.store.http.HttpApiConfig.PostLocation;
+import org.apache.drill.exec.store.http.HttpStoragePlugin;
+import org.apache.drill.exec.store.http.HttpStoragePluginConfig;
+import org.apache.drill.exec.store.http.HttpSubScan;
+import org.apache.drill.exec.store.http.oauth.AccessTokenAuthenticator;
+import org.apache.drill.exec.store.http.oauth.AccessTokenInterceptor;
+import org.apache.drill.exec.store.http.oauth.AccessTokenRepository;
+import org.apache.drill.exec.store.http.paginator.Paginator;
+import org.apache.drill.exec.store.http.util.HttpProxyConfig.ProxyBuilder;
+import org.apache.drill.exec.store.security.UsernamePasswordWithProxyCredentials;
+import org.jetbrains.annotations.NotNull;
+import org.json.simple.JSONObject;
+import org.json.simple.parser.JSONParser;
+import org.json.simple.parser.ParseException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Performs the actual HTTP requests for the HTTP Storage Plugin. The core
@@ -99,12 +99,13 @@ import java.util.stream.Collectors;
  * InputStream with that URL's contents.
  */
 public class SimpleHttp {
+
   private static final Logger logger = LoggerFactory.getLogger(SimpleHttp.class);
   private static final int DEFAULT_TIMEOUT = 1;
   private static final Pattern URL_PARAM_REGEX = Pattern.compile("\\{(\\w+)(?:=(\\w*))?}");
   public static final MediaType JSON_MEDIA_TYPE = MediaType.get("application/json; charset=utf-8");
 
-  private final OkHttpClient client;
+  private OkHttpClient client;
   private final File tempDir;
   private final HttpProxyConfig proxyConfig;
   private final CustomErrorContext errorContext;
@@ -121,7 +122,6 @@ public class SimpleHttp {
   private String responseProtocol;
   private String responseURL;
   private String username;
-
 
   public SimpleHttp(HttpSubScan scanDefn, HttpUrl url, File tempDir,
     HttpProxyConfig proxyConfig, CustomErrorContext errorContext, Paginator paginator) {
@@ -142,20 +142,21 @@ public class SimpleHttp {
 
   /**
    * This constructor does not have an HttpSubScan and can be used outside the context of the HttpStoragePlugin.
-   * @param url The URL for an HTTP request
-   * @param tempDir Temp directory for caching
-   * @param proxyConfig Proxy configuration for making API calls
-   * @param errorContext The error context for error messages
-   * @param paginator The {@link Paginator} object for pagination.
-   * @param tokenTable The OAuth token table
-   * @param pluginConfig HttpStoragePlugin configuration.  The plugin obtains OAuth and timeout info from this config.
+   *
+   * @param url            The URL for an HTTP request
+   * @param tempDir        Temp directory for caching
+   * @param proxyConfig    Proxy configuration for making API calls
+   * @param errorContext   The error context for error messages
+   * @param paginator      The {@link Paginator} object for pagination.
+   * @param tokenTable     The OAuth token table
+   * @param pluginConfig   HttpStoragePlugin configuration.  The plugin obtains OAuth and timeout info from this config.
    * @param endpointConfig The
-   * @param connection The name of the connection
-   * @param filters A Key/value set of filters and values
+   * @param connection     The name of the connection
+   * @param filters        A Key/value set of filters and values
    */
   public SimpleHttp(HttpUrl url, File tempDir, HttpProxyConfig proxyConfig, CustomErrorContext errorContext,
-                    Paginator paginator, PersistentTokenTable tokenTable, HttpStoragePluginConfig pluginConfig,
-                    HttpApiConfig endpointConfig, String connection, Map<String, String> filters) {
+    Paginator paginator, PersistentTokenTable tokenTable, HttpStoragePluginConfig pluginConfig,
+    HttpApiConfig endpointConfig, String connection, Map<String, String> filters) {
     this.url = url;
     this.tempDir = tempDir;
     this.proxyConfig = proxyConfig;
@@ -233,21 +234,20 @@ public class SimpleHttp {
     builder.connectTimeout(timeout, TimeUnit.SECONDS);
     builder.writeTimeout(timeout, TimeUnit.SECONDS);
     builder.readTimeout(timeout, TimeUnit.SECONDS);
+    builder.callTimeout(timeout, TimeUnit.SECONDS);
 
     // Code to skip SSL Certificate validation
     // Sourced from https://stackoverflow.com/questions/60110848/how-to-disable-ssl-verification
-    if (! apiConfig.verifySSLCert()) {
+    if (!apiConfig.verifySSLCert()) {
       try {
         TrustManager[] trustAllCerts = getAllTrustingTrustManager();
         SSLContext sslContext = SSLContext.getInstance("SSL");
         sslContext.init(null, trustAllCerts, new java.security.SecureRandom());
         SSLSocketFactory sslSocketFactory = sslContext.getSocketFactory();
 
-
         builder.sslSocketFactory(sslSocketFactory, (X509TrustManager) trustAllCerts[0]);
         HostnameVerifier verifier = (hostname, session) -> true;
         builder.hostnameVerifier(verifier);
-
       } catch (KeyManagementException | NoSuchAlgorithmException e) {
         logger.error("Error when configuring Drill not to verify SSL certs. {}", e.getMessage());
       }
@@ -266,7 +266,8 @@ public class SimpleHttp {
   /**
    * Applies the proxy configuration to the OkHttp3 builder.  This ensures that proxy configurations
    * will be consistent across HTTP REST connections.
-   * @param builder The input OkHttp3 builder
+   *
+   * @param builder     The input OkHttp3 builder
    * @param proxyConfig The proxy configuration
    */
   public static void addProxyInfo(Builder builder, HttpProxyConfig proxyConfig) {
@@ -300,7 +301,7 @@ public class SimpleHttp {
   }
 
   private TrustManager[] getAllTrustingTrustManager() {
-    return new TrustManager[] {
+    return new TrustManager[]{
       new X509TrustManager() {
         @Override
         public void checkClientTrusted(X509Certificate[] chain, String authType) {
@@ -318,14 +319,13 @@ public class SimpleHttp {
     };
   }
 
-
   /**
    * Returns an InputStream based on the URL and config in the scanSpec. If anything goes wrong
    * the method throws a UserException.
+   *
    * @return An Inputstream of the data from the URL call.
    */
   public InputStream getInputStream() {
-
     Request.Builder requestBuilder = new Request.Builder()
       .url(url);
 
@@ -333,7 +333,11 @@ public class SimpleHttp {
     if (apiConfig.getMethodType() == HttpMethod.POST) {
       // Handle POST requests
       FormBody.Builder formBodyBuilder;
-
+      if (filters != null) {
+        logger.warn(filters.toString());
+      } else {
+        logger.warn("filters are null");
+      }
       // If the user wants filters pushed down to the POST body, do so here.
       if (apiConfig.getPostLocation() == PostLocation.POST_BODY) {
         formBodyBuilder = buildPostBody(filters, apiConfig.postBody());
@@ -389,7 +393,7 @@ public class SimpleHttp {
       // Case for pagination without limit
       if (paginator != null && (
         response.code() != 200 || response.body() == null ||
-        response.body().contentLength() == 0)) {
+          response.body().contentLength() == 0)) {
         paginator.notifyPartialPage();
       }
 
@@ -467,6 +471,7 @@ public class SimpleHttp {
   /**
    * If the user has defined username/password for the specific API endpoint, pass the API endpoint credentials.
    * Otherwise, use the global connection credentials.
+   *
    * @return A UsernamePasswordCredentials collection with the correct username/password
    */
   private Optional<UsernamePasswordWithProxyCredentials> getCredentials() {
@@ -585,30 +590,29 @@ public class SimpleHttp {
   }
 
   private JSONObject buildJsonPostBody(String postBody) {
-    JSONObject jsonObject = new JSONObject();
     if (StringUtils.isEmpty(postBody)) {
-      return jsonObject;
+      return new JSONObject();
     }
-    final Pattern postBodyPattern = Pattern.compile("^.+=.+$");
 
-    String[] lines = postBody.split("\\r?\\n");
-    for (String line : lines) {
-
-      // If the string is in the format key=value split it,
-      // Otherwise ignore
-      if (postBodyPattern.matcher(line).find()) {
-        //Split into key/value
-        String[] parts = line.split("=");
-        jsonObject.put(parts[0], parts[1]);
-      }
+    if (Base64.isArrayByteBase64(postBody.getBytes(StandardCharsets.UTF_8))) {
+      postBody = new String(Base64.decodeBase64(postBody));
+      logger.info(String.format("postBody decoded from base64: %s", postBody));
     }
-    return jsonObject;
+
+    JSONParser parser = new JSONParser();
+    try {
+      return (JSONObject) parser.parse(postBody);
+    } catch (ParseException e) {
+      logger.error(String.format("Could not parse postBody json %s", e.getMessage()));
+      return new JSONObject();
+    }
   }
 
   /**
    * This function is used to push filters down to the post body rather than the URL query string.
    * It will also add the static parameters to the post body as well.
-   * @param filters A HashMap of the filters and values
+   *
+   * @param filters  A HashMap of the filters and values
    * @param postBody The post body of static parameters.
    * @return The post body builder with the filters and static parameters
    */
@@ -670,11 +674,12 @@ public class SimpleHttp {
    * This function is used to extract the default parameter supplied in a URL. For instance,
    * if the supplied URL is http://someapi.com/path/{p1=foo}, the function will return foo. If there
    * is not a matching parameter or no default value, the function will return null.
-   * @param url The URL containing a default parameter
+   *
+   * @param url       The URL containing a default parameter
    * @param parameter The parameter for which you need the value
    * @return The value for the supplied parameter
    */
-  public static String getDefaultParameterValue (HttpUrl url, String parameter) {
+  public static String getDefaultParameterValue(HttpUrl url, String parameter) {
     String decodedURL = decodedURL(url);
     Pattern paramRegex = Pattern.compile("\\{" + parameter + "=(\\w+?)}");
     Matcher paramMatcher = paramRegex.matcher(decodedURL);
@@ -693,12 +698,12 @@ public class SimpleHttp {
    * from the query into the URL.  For example the API: github.com/orgs/{org}/repos requires a user to
    * specify an organization and replace {org} with an actual organization.  The filter is passed down from
    * the query.
-   *
+   * <p>
    * Note that if a URL contains URL parameters and one is not provided in the filters, Drill will throw
    * a UserException.
    *
-   * @param url The HttpUrl containing URL Parameters
-   * @param filters  A CaseInsensitiveMap of filters
+   * @param url     The HttpUrl containing URL Parameters
+   * @param filters A CaseInsensitiveMap of filters
    * @return A string of the URL with the URL parameters replaced by filter values
    */
   public static String mapURLParameters(HttpUrl url, Map<String, String> filters) {
@@ -712,7 +717,7 @@ public class SimpleHttp {
         .message("API Query with URL Parameters must be populated.")
         .build(logger);
     }
-    CaseInsensitiveMap<String>caseInsensitiveFilterMap = (CaseInsensitiveMap<String>)filters;
+    CaseInsensitiveMap<String> caseInsensitiveFilterMap = (CaseInsensitiveMap<String>) filters;
 
     List<String> params = SimpleHttp.getURLParameters(url);
     String tempUrl = SimpleHttp.decodedURL(url);
@@ -725,13 +730,12 @@ public class SimpleHttp {
       //     necessary as I don't think Calcite or Drill will push down an empty filter, but for the sake
       //     of providing helpful errors in strange cases, it is there.
 
-
       String value = caseInsensitiveFilterMap.get(param);
 
       // Check and see if there is a default for this parameter. If not throw an error.
       if (StringUtils.isEmpty(value)) {
         String defaultValue = getDefaultParameterValue(url, param);
-        if (! StringUtils.isEmpty(defaultValue)) {
+        if (!StringUtils.isEmpty(defaultValue)) {
           tempUrl = tempUrl.replace("/{" + param + "=" + defaultValue + "}", "/" + defaultValue);
         } else {
           throw UserException
@@ -748,7 +752,6 @@ public class SimpleHttp {
     }
     return tempUrl;
   }
-
 
   public static String mapPositionalParameters(String rawUrl, List<String> params) {
     HttpUrl url = HttpUrl.parse(rawUrl);
@@ -793,6 +796,7 @@ public class SimpleHttp {
 
   /**
    * Validates a URL.
+   *
    * @param url The input URL.  Should be a string.
    * @return True of the URL is valid, false if not.
    */
@@ -802,6 +806,7 @@ public class SimpleHttp {
 
   /**
    * Accepts a list of input readers and converts that into an ArrayList of Strings
+   *
    * @param inputReaders The array of FieldReaders
    * @return A List of Strings containing the values from the FieldReaders or null
    * to indicate that at least one null is present in the arguments.
@@ -831,7 +836,7 @@ public class SimpleHttp {
       throw UserException.functionError()
         .message("You must call this function with a valid endpoint name.")
         .build(logger);
-    } else if (! endpointConfig.inputType().contentEquals("json")) {
+    } else if (!endpointConfig.inputType().contentEquals("json")) {
       throw UserException.functionError()
         .message("Http_get only supports API endpoints which return json.")
         .build(logger);
@@ -863,15 +868,15 @@ public class SimpleHttp {
     }
   }
 
-
   /**
    * This function makes an API call and returns a string of the parsed results. It is used in the http_get() UDF
    * and retrieves all the configuration parameters contained in the storage plugin and endpoint configuration. The exception
    * is pagination.  This does not support pagination.
-   * @param plugin The HTTP storage plugin upon which the API call is based.
+   *
+   * @param plugin         The HTTP storage plugin upon which the API call is based.
    * @param endpointConfig The configuration of the API endpoint upon which the API call is based.
-   * @param context {@link DrillbitContext} The context from the current query
-   * @param args An optional list of parameter arguments which will be included in the URL
+   * @param context        {@link DrillbitContext} The context from the current query
+   * @param args           An optional list of parameter arguments which will be included in the URL
    * @return A String of the results.
    */
   public static SimpleHttp apiCall(
@@ -945,14 +950,15 @@ public class SimpleHttp {
     Request request = requestBuilder.build();
 
     // Execute the request
-      Response response = client.newCall(request).execute();
-      return response.body();
+    Response response = client.newCall(request).execute();
+    return response.body();
   }
 
   /**
    * Intercepts requests and adds authentication headers to the request
    */
   public static class BasicAuthInterceptor implements Interceptor {
+
     private final String credentials;
 
     public BasicAuthInterceptor(String user, String password) {
@@ -972,6 +978,7 @@ public class SimpleHttp {
   }
 
   public static class SimpleHttpBuilder {
+
     private HttpSubScan scanDefn;
     private HttpUrl url;
     private File tempDir;
@@ -982,7 +989,7 @@ public class SimpleHttp {
     private HttpStoragePluginConfig pluginConfig;
     private HttpApiConfig endpointConfig;
     private OAuthConfig oAuthConfig;
-    private Map<String,String> filters;
+    private Map<String, String> filters;
     private String connection;
     private String username;
 
@@ -1048,11 +1055,10 @@ public class SimpleHttp {
       return this;
     }
 
-    public SimpleHttpBuilder filters(Map<String,String> filters) {
+    public SimpleHttpBuilder filters(Map<String, String> filters) {
       this.filters = filters;
       return this;
     }
-
 
     public SimpleHttp build() {
       if (this.scanDefn != null) {
